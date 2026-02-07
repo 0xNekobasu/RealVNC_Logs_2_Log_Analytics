@@ -1,0 +1,61 @@
+{
+    "properties": {
+        "schema": {
+               "name": "RealVNC_PortalLogs_CL",
+               "columns": [
+                    {
+                        "name": "TimeGenerated",
+                        "type": "DateTime"
+                    }, 
+                    {
+                        "name": "id",
+                        "type": "string"
+                    },
+                    {
+                        "name":"description",
+                        "Type":"string"
+                    },
+                    {
+                        "name": "teamId",
+                        "type": "string"
+                    },
+                    {
+                        "name": "serverId",
+                        "type": "string"
+                    },
+                    {
+                        "name": "serverName",
+                        "type":"string"
+                    },                    
+                    {
+                        "name": "viewerId",
+                        "type":"string"
+                    },                    
+                    {
+                        "name": "userId",
+                        "type":"string"
+                    },
+                    {
+                        "name": "email",
+                        "type":"string"
+                    },
+                    {
+                        "name": "timestamp",
+                        "type":"long"
+                    },
+                    {
+                        "name": "eventType",
+                        "type":"string"
+                    },
+                    {
+                        "name": "eventCategory",
+                        "type":"string"
+                    },
+                    {
+                        "name": "eventBody",
+                        "type":"dynamic"
+                    }
+              ]
+        }
+    }
+}

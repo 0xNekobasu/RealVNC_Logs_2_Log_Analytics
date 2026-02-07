@@ -2,7 +2,7 @@
 """
 rvncPortalLogs.py
 
-Calls RealVNC Portal API to pull logs and then pushes them to Microsoft Sentinel SIEM
+Calls RealVNC Portal API to pull logs and then pushes them to Microsoft log analytics
 
 Usage (typically in crontab or other automation system e.g Jenkins):
     python3 rvncPortalLogs.py
@@ -148,6 +148,27 @@ def get_portal_logs(bearerToken):
 
     return arrEvents # This is an array of pythonObjects
 
+def upload_to_log_analytics(arrEvents):
+    """
+    uploads the logs to Microsoft Log Analytics.
+
+    Args:
+        arrEvents - python array of the event logs to upload in object format. 
+
+    Returns:
+        Complete Action. Script end.
+    
+    Raises:
+        None
+    """
+    dcrImmutableID = os.getenv("here")
+    table = "RealVNC_PortalLogs_CL"
+    dceURI = os.getenv("here")
+    streamName = "Custom-" + table
+
+    # Get authed with Azure
+    # setup ingestion client
+    # shove logs to log Analytics
 
 
     
