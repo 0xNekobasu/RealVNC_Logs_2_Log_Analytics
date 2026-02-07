@@ -121,20 +121,33 @@ def get_portal_logs(bearerToken):
         None
     """
     # Setup the http request to call the audit logs
-    strAuditUrl = "https://connect-api.services.vnc.com/1.0/audit"
+    strAuditUrl = "https://connect-api.services.vnc.com"
     objParametersJson={
         "order":"DESC",
         "from":set_log_time_window()
     }
     objHeadersJson={
         "Accept":"application/json",
-        "Authorization":f"Bearer {get_rvnc_bearertoken()}" # Generates the bearer token at this point.
+        "Authorization":f"Bearer {bearerToken}" # Generates the bearer token at this point.
     }
-    response = requests.get(strAuditUrl,headers=objHeadersJson,params=objParametersJson)
+    response = requests.get(url=strAuditUrl+"/1.0/audit",headers=objHeadersJson,params=objParametersJson)
     if check_response(response) == False:
         logging.error("ERROR: Issue with API call for obtaining Audit logs")
         logging.error(response)
         return response
+    objRVNCLogsJson = json.loads(response.text)
+    print (response.text)
+    #print(json.loads(response.text))
+    #print(response.links)
+    while (response.links):
+        response = requests.get(url=strAuditUrl+str(response.links['next'].get('url')),headers=objHeadersJson)
+        objPgResponse = json.loads(response.text)
+        objRVNCLogsJson = {
+            'events':objRVNCLogsJson['events']+ objPgResponse['events']
+        }
+    #print (objRVNCLogsJson)
+
+
     
 
 
@@ -149,7 +162,7 @@ def __Main__():
     load_dotenv()
     logging.debug("dotEnvInitialised")
     # end pre-requisiste setup
-    get_rvnc_bearertoken()
+    get_portal_logs(get_rvnc_bearertoken())
 
 
 ####################################################
