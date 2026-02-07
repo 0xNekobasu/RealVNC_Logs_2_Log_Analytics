@@ -115,7 +115,7 @@ def get_portal_logs(bearerToken):
         Bearer token
 
     Returns:
-        ### A VERSION OF THE LOGS WHICH IS THEN PUSHED INTO SENTINEL   
+        ### arrEvents - a python array containing each log line to ingest in the form of a python object. These lines will need to be json dumped before ingestion.
     
     Raises:
         None
@@ -136,16 +136,18 @@ def get_portal_logs(bearerToken):
         logging.error(response)
         return response
     objRVNCLogsJson = json.loads(response.text)
-    print (response.text)
-    #print(json.loads(response.text))
-    #print(response.links)
+    #Pagination checks, will go and grab all the logs for the time period until we have no more left. 
     while (response.links):
+        logging.info("Pagination detected, obtaining additional logs")
         response = requests.get(url=strAuditUrl+str(response.links['next'].get('url')),headers=objHeadersJson)
         objPgResponse = json.loads(response.text)
         objRVNCLogsJson = {
-            'events':objRVNCLogsJson['events']+ objPgResponse['events']
+            'events':objRVNCLogsJson['events']+ objPgResponse['events'] #Merges any paginated log lines together
         }
-    #print (objRVNCLogsJson)
+    arrEvents = objRVNCLogsJson.get("events",[])
+
+    return arrEvents # This is an array of pythonObjects
+
 
 
     
@@ -158,11 +160,11 @@ def __Main__():
     """
     # Pre-requisite setup
     init_Logging()
-    logging.debug("Logging setup")
+    logging.debug("Logging setup complete")
     load_dotenv()
-    logging.debug("dotEnvInitialised")
+    logging.debug("dotEnvInitialised, Envrionment variables now available")
     # end pre-requisiste setup
-    get_portal_logs(get_rvnc_bearertoken())
+    arrEvents = get_portal_logs(get_rvnc_bearertoken())
 
 
 ####################################################
