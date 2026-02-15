@@ -8,7 +8,17 @@ Usage (typically in crontab or other automation system e.g Jenkins):
     python3 rvncPortalLogs.py
 
 Notes:
-  - insert note here
+  Pre-requisites:
+    See readme, but you will need to setup some envrionment variables or securely pass them through to 
+    the script. These ones used in this script are
+    
+    RVNC_API_KEY
+    RVNC_API_KEY_ID
+    VENV_AZURE_TENANT_ID
+    VENV_AZURE_CLIENT_ID
+    VENV_AZURE_CLIENT_SECRET
+    DCR_IMMUTABLE_ID
+    DCE_ENDPOINT
 """
 # Standard Libraries
 import os
@@ -52,7 +62,9 @@ def get_rvnc_bearertoken():
         logging.error("ERROR: Issue with API CALL")
         logging.error(response)
         return response
+    logging.info(response)
     objParsedResponse = json.loads(response.text)
+    logging.info("RealVNC Bearer Token successfully obtained")
     return (objParsedResponse['token'])
 
 def init_Logging():
@@ -70,7 +82,6 @@ def init_Logging():
     """
     logger = logging.getLogger(__name__)
     logging.basicConfig(filename='rvncPortalLogs.log',format='%(asctime)s|%(levelname)s|%(message)s',encoding='utf-8',level=logging.DEBUG)
-    #logging.debug("Logging Initialised")
 
 def check_response(apiResponse):
     """
@@ -86,10 +97,10 @@ def check_response(apiResponse):
         ###    
     """
     if "201" in str(apiResponse) or "200" in str(apiResponse):
-        logging.info("API Response returned correct")
+        logging.info("API Response - Successful")
         return True 
     else:
-        logging.error("API Response error - request failed")
+        logging.error("API Response - ERROR - Request Failed")
         return False
 
 def set_log_time_window():
@@ -107,6 +118,7 @@ def set_log_time_window():
     """
     intUnixTime = int(time.time()*1000)
     intAuditStart = intUnixTime - 900000
+
     return intAuditStart
 
 def get_portal_logs(bearerToken):
@@ -147,6 +159,7 @@ def get_portal_logs(bearerToken):
             'events':objRVNCLogsJson['events']+ objPgResponse['events'] #Merges any paginated log lines together
         }
     arrEvents = objRVNCLogsJson.get("events",[])
+    # Add logging for "no Logs found in last 15 minutes"
     return arrEvents # This is an array of pythonObjects
 
 def upload_to_log_analytics(arrEvents):
@@ -183,12 +196,15 @@ def __Main__():
     """
     # Pre-requisite setup
     init_Logging()
-    logging.debug("Logging setup complete")
+    logging.info("----------------- Script Run Start -----------------")
+    logging.debug("Logging Initialised")
     load_dotenv()
-    logging.debug("dotEnvInitialised, Envrionment variables now available")
+    logging.debug("dotEnvInitialised, Envrionment variables available")
     # end pre-requisiste setup
     arrEvents = get_portal_logs(get_rvnc_bearertoken())
+    print (arrEvents)
     upload_to_log_analytics(arrEvents)
+    logging.info("----------------- Script Run End -----------------")
 ####################################################
 #  Run script. 
 __Main__()
