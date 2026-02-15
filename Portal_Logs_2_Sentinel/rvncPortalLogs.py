@@ -15,10 +15,13 @@ import os
 import logging
 import json
 import time
+import urllib.parse
 
 #Third Party Libraries
 import requests
 from dotenv import load_dotenv
+from azure.identity import ClientSecretCredential
+from azure.monitor.ingestion import LogsIngestionClient
 
 def get_rvnc_bearertoken():
     """
@@ -123,8 +126,8 @@ def get_portal_logs(bearerToken):
     # Setup the http request to call the audit logs
     strAuditUrl = "https://connect-api.services.vnc.com"
     objParametersJson={
-        "order":"DESC",
-        "from":set_log_time_window()
+        "order":"DESC"
+        #"from":set_log_time_window()
     }
     objHeadersJson={
         "Accept":"application/json",
@@ -145,7 +148,6 @@ def get_portal_logs(bearerToken):
             'events':objRVNCLogsJson['events']+ objPgResponse['events'] #Merges any paginated log lines together
         }
     arrEvents = objRVNCLogsJson.get("events",[])
-
     return arrEvents # This is an array of pythonObjects
 
 def upload_to_log_analytics(arrEvents):
@@ -161,17 +163,57 @@ def upload_to_log_analytics(arrEvents):
     Raises:
         None
     """
-    dcrImmutableID = os.getenv("here")
+    dcrImmutableID = os.getenv("DCR_IMMUTABLE_ID")
     table = "RealVNC_PortalLogs_CL"
-    dceURI = os.getenv("here")
+    dceURI = os.getenv("DCE_ENDPOINT")
     streamName = "Custom-" + table
 
     # Get authed with Azure
-    # setup ingestion client
-    # shove logs to log Analytics
-
-
+    credential = ClientSecretCredential(os.getenv("AZURE_TENANT_ID"),os.getenv("AZURE_CLIENT_ID"),os.getenv("AZURE_CLIENT_SECRET"))
     
+    # ADD A "CHECK IF THIS WORKED FUNCTION HERE"
+
+    # setup ingestion client
+    ingestionClient = LogsIngestionClient(endpoint=dceURI,credential=credential,logging_enable=True)
+    # ADD A "CHECK IF THIS WORKED FUNCTION HERE"
+    # shove logs to log Analytics
+    ingestionClient.upload(rule_id=dcrImmutableID,stream_name=streamName,logs=arrEvents)
+
+
+    #for logline in range(len(arrEvents)): # for each log line, convert to JSON and push to Log Analytics
+    
+        #arrLogLine= arrLogLine.append(json.dumps(arrEvents[logline]))
+        #ingestionClient.upload(rule_id=dcrImmutableID,stream_name=streamName,logs=arrEvents)
+
+def get_ms_bearer_token():
+    """
+    Gets the bearer credentials for authenticating with azure monitor ingestion Service principle
+
+    Args:
+        none 
+
+    Returns:
+        bearer token
+    
+    Raises:
+        TBC
+    """
+    msURL = "https://login.microsoftonline.com/"+os.getenv("AZURE_TENANT_ID")+"/oauth2/v2.0/token"
+    scope = urllib.parse.quote("https://monitor.azure.com//.default",safe='')
+    objBody=(
+        f"client_id={os.getenv("AZURE_CLIENT_ID")}"
+        f"&scope={scope}"
+        f"&client_secret={os.getenv("AZURE_CLIENT_SECRET")}"
+        f"&grant_type=client_credentials"
+    )
+    objHeadersJson={
+        "Content-Type":"application/x-www-form-urlencoded",
+    }
+    response = requests.post(url=msURL,headers=objHeadersJson,data=objBody)
+    check_response(response)
+    bearer=response.json()["access_token"]
+    return bearer
+
 
 
 ####################################################
@@ -186,8 +228,8 @@ def __Main__():
     logging.debug("dotEnvInitialised, Envrionment variables now available")
     # end pre-requisiste setup
     arrEvents = get_portal_logs(get_rvnc_bearertoken())
-
-
+    upload_to_log_analytics(arrEvents)
+    #get_ms_bearer_token()
 ####################################################
 #  Run script. 
 __Main__()
