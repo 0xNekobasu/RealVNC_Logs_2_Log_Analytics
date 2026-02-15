@@ -159,7 +159,6 @@ def get_portal_logs(bearerToken):
             'events':objRVNCLogsJson['events']+ objPgResponse['events'] #Merges any paginated log lines together
         }
     arrEvents = objRVNCLogsJson.get("events",[])
-    # Add logging for "no Logs found in last 15 minutes"
     return arrEvents # This is an array of pythonObjects
 
 def upload_to_log_analytics(arrEvents):
@@ -183,8 +182,10 @@ def upload_to_log_analytics(arrEvents):
     # Get authed with Azure
     credential = ClientSecretCredential(os.getenv("VENV_AZURE_TENANT_ID"),os.getenv("VENV_AZURE_CLIENT_ID"),os.getenv("VENV_AZURE_CLIENT_SECRET"))
     # ADD A "CHECK IF THIS WORKED FUNCTION HERE"
-    ingestionClient = LogsIngestionClient(endpoint=dceURI,credential=credential) # Setup ingestion client
+    print ("cred: ",credential)
+    ingestionClient = LogsIngestionClient(endpoint=dceURI,credential=credential,logging=True) # Setup ingestion client
     # ADD A "CHECK IF THIS WORKED FUNCTION HERE"
+    print ("ingestClient",credential)
     ingestionClient.upload(rule_id=dcrImmutableID,stream_name=streamName,logs=arrEvents) # Upload logs
     # Add a check to see if function worked, Closed out program
 
@@ -202,7 +203,10 @@ def __Main__():
     logging.debug("dotEnvInitialised, Envrionment variables available")
     # end pre-requisiste setup
     arrEvents = get_portal_logs(get_rvnc_bearertoken())
-    print (arrEvents)
+    if not arrEvents:
+        logging.info("No events found in the last 15 minutes")
+        logging.info("----------------- Script Run End -----------------")
+        return
     upload_to_log_analytics(arrEvents)
     logging.info("----------------- Script Run End -----------------")
 ####################################################
