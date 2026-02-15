@@ -15,7 +15,6 @@ import os
 import logging
 import json
 import time
-import urllib.parse
 
 #Third Party Libraries
 import requests
@@ -171,13 +170,9 @@ def upload_to_log_analytics(arrEvents):
     # Get authed with Azure
     credential = ClientSecretCredential(os.getenv("VENV_AZURE_TENANT_ID"),os.getenv("VENV_AZURE_CLIENT_ID"),os.getenv("VENV_AZURE_CLIENT_SECRET"))
     # ADD A "CHECK IF THIS WORKED FUNCTION HERE"
-
-    # setup ingestion client
-    ingestionClient = LogsIngestionClient(endpoint=dceURI,credential=credential)
+    ingestionClient = LogsIngestionClient(endpoint=dceURI,credential=credential) # Setup ingestion client
     # ADD A "CHECK IF THIS WORKED FUNCTION HERE"
-
-    # shove logs to log Analytics
-    ingestionClient.upload(rule_id=dcrImmutableID,stream_name=streamName,logs=arrEvents)
+    ingestionClient.upload(rule_id=dcrImmutableID,stream_name=streamName,logs=arrEvents) # Upload logs
     # Add a check to see if function worked, Closed out program
 
 
