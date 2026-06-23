@@ -424,11 +424,10 @@
       "location": "[parameters('location')]",
       "dependsOn": [
         "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
-        "[resourceId('Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), variables('functionAppName'), variables('storageBlobDataOwnerRoleId')))]"
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), variables('functionAppName'), variables('storageBlobDataOwnerRoleId')))]"
       ],
       "properties": {
-        "packageUri": "[parameters('packageUri')]",
-        "remoteBuild": true
+        "packageUri": "[parameters('packageUri')]"
       }
     }
   ],
