@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "appNamePrefix": {
+      "value": "realvnc"
+    },
+    "logAnalyticsWorkspaceName": {
+      "value": "<your-existing-log-analytics-workspace-name>"
+    },
+    "rvncApiKey": {
+      "value": "<your-realvnc-access-key>"
+    },
+    "rvncApiKeyId": {
+      "value": "<your-realvnc-access-key-id>"
+    },
+    "scheduleNcrontab": {
+      "value": "0 */10 * * * *"
+    }
+  }
+}

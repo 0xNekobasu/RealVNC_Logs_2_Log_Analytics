@@ -2,3 +2,12 @@ Portal_Logs_2_Log_Analytics/.env
 Portal_Logs_2_Log_Analytics/venv/
 Portal_Logs_2_Log_Analytics/venv2/
 Portal_Logs_2_Log_Analytics/rvncPortalLogs.log
+
+# Python
+__pycache__/
+*.pyc
+
+# Azure Functions local
+Portal_Logs_2_Log_Analytics_FunctionApp/local.settings.json
+Portal_Logs_2_Log_Analytics_FunctionApp/.python_packages/
+Portal_Logs_2_Log_Analytics_FunctionApp/.venv/

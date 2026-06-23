@@ -1,0 +1,61 @@
+name: Build and release function package
+
+# Builds released-package.zip from the Function App project and attaches it to a
+# GitHub Release whenever a tag like v1.0.0 is pushed (or when run manually).
+# The ARM template's `packageUri` parameter defaults to this asset, so a tagged
+# release is all that's needed for the one-click "Deploy to Azure" button to work.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PROJECT_DIR: Portal_Logs_2_Log_Analytics_FunctionApp
+  PACKAGE_NAME: released-package.zip
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build dependencies into the package
+        # Flex Consumption uses remote build by default, but vendoring deps into
+        # .python_packages makes the package self-contained and deploy-safe.
+        run: |
+          cd "$PROJECT_DIR"
+          python -m pip install --upgrade pip
+          pip install --target=".python_packages/lib/site-packages" -r requirements.txt
+
+      - name: Create released-package.zip
+        run: |
+          cd "$PROJECT_DIR"
+          zip -r "../$PACKAGE_NAME" . \
+            -x "*.git*" \
+            -x "infra/*" \
+            -x "local.settings.json" \
+            -x "local.settings.json.example" \
+            -x "README.md"
+
+      - name: Upload artifact (for manual runs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: released-package
+          path: ${{ env.PACKAGE_NAME }}
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.PACKAGE_NAME }}
