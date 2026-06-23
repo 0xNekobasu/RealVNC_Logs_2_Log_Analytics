@@ -1,0 +1,12 @@
+# Azure Functions Python worker. Do not remove or pin below the bundle range.
+azure-functions
+
+# RealVNC API calls
+requests
+
+# Azure auth (managed identity) + Log Analytics ingestion
+azure-identity
+azure-monitor-ingestion
+
+# Checkpoint/watermark persistence in blob storage
+azure-storage-blob

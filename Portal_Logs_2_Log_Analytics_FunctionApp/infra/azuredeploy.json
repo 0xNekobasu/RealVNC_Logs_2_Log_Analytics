@@ -1,0 +1,457 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "comments": "Deploys the RealVNC Portal -> Log Analytics forwarder as an Azure Function App (Flex Consumption, Python 3.12) with a Direct DCR, custom table, Key Vault and managed identity. The Log Analytics workspace must already exist in this resource group."
+  },
+  "parameters": {
+    "appNamePrefix": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 11,
+      "metadata": {
+        "description": "Common name used as a prefix for all resources (letters/numbers). A short unique suffix is appended automatically so deployments don't collide."
+      }
+    },
+    "logAnalyticsWorkspaceName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the EXISTING Log Analytics workspace in this resource group. The custom table is created in it and it backs Application Insights."
+      }
+    },
+    "rvncApiKey": {
+      "type": "securestring",
+      "metadata": {
+        "description": "RealVNC portal API access key (accessKey). Stored as a Key Vault secret."
+      }
+    },
+    "rvncApiKeyId": {
+      "type": "securestring",
+      "metadata": {
+        "description": "RealVNC portal API access key id (accessKeyId). Stored as a Key Vault secret."
+      }
+    },
+    "packageUri": {
+      "type": "string",
+      "defaultValue": "https://github.com/0xNekobasu/RealVNC_Logs_2_Log_Analytics/releases/latest/download/released-package.zip",
+      "metadata": {
+        "description": "URL of the released-package.zip function code package (defaults to the latest GitHub release)."
+      }
+    },
+    "deployCode": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Whether to pull and deploy the function code package (onedeploy) as part of this deployment. Set to false to deploy infrastructure only and publish code separately (e.g. with 'func azure functionapp publish')."
+      }
+    },
+    "scheduleNcrontab": {
+      "type": "string",
+      "defaultValue": "0 */10 * * * *",
+      "metadata": {
+        "description": "NCRONTAB schedule for the timer trigger. Default is every 10 minutes. Editable later in the SCHEDULE_NCRONTAB app setting (e.g. '0 */1 * * * *' for every minute)."
+      }
+    },
+    "lookbackMs": {
+      "type": "string",
+      "defaultValue": "900000",
+      "metadata": {
+        "description": "Audit log lookback window in milliseconds (default 900000 = 15 minutes). Keep this >= the schedule interval."
+      }
+    },
+    "pythonVersion": {
+      "type": "string",
+      "defaultValue": "3.12",
+      "allowedValues": [ "3.11", "3.12" ],
+      "metadata": {
+        "description": "Python version for the Flex Consumption function app."
+      }
+    },
+    "maximumInstanceCount": {
+      "type": "int",
+      "defaultValue": 40,
+      "metadata": {
+        "description": "Maximum scale-out instance count for the Flex Consumption plan."
+      }
+    },
+    "instanceMemoryMB": {
+      "type": "int",
+      "defaultValue": 2048,
+      "allowedValues": [ 2048, 4096 ],
+      "metadata": {
+        "description": "Per-instance memory (MB) for the Flex Consumption plan."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Region for the resources. Must be a region that supports the Flex Consumption plan."
+      }
+    }
+  },
+  "variables": {
+    "uniqueSuffix": "[take(uniqueString(resourceGroup().id, parameters('appNamePrefix')), 6)]",
+    "cleanPrefix": "[take(toLower(replace(replace(parameters('appNamePrefix'), '-', ''), '_', '')), 11)]",
+    "functionAppName": "[concat(parameters('appNamePrefix'), '-func-', variables('uniqueSuffix'))]",
+    "hostingPlanName": "[concat(parameters('appNamePrefix'), '-plan-', variables('uniqueSuffix'))]",
+    "appInsightsName": "[concat(parameters('appNamePrefix'), '-ai-', variables('uniqueSuffix'))]",
+    "dcrName": "[concat(parameters('appNamePrefix'), '-dcr-', variables('uniqueSuffix'))]",
+    "keyVaultName": "[concat(variables('cleanPrefix'), '-kv-', variables('uniqueSuffix'))]",
+    "storageAccountName": "[concat(variables('cleanPrefix'), 'st', variables('uniqueSuffix'))]",
+    "deploymentContainerName": "deploymentpackage",
+    "checkpointContainerName": "checkpoints",
+    "tableName": "RealVNC_PortalLogs_CL",
+    "streamName": "Custom-RealVNC_PortalLogs_CL",
+    "workspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName'))]",
+    "transformKql": "source | extend timestamp_sec = todouble(timestamp) / 1000.0 | extend TimeGenerated = todatetime('1970-01-01 00:00:00') + totimespan(timestamp_sec * 1s) | project TimeGenerated, id, description, teamId, serverId, serverName, viewerId, userId, email, timestamp, eventType, eventCategory, eventBody",
+    "storageBlobDataOwnerRoleId": "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",
+    "keyVaultSecretsUserRoleId": "4633458b-17de-408a-b874-0445c86b69e6",
+    "monitoringMetricsPublisherRoleId": "3913510d-42f4-4e42-8a64-420c390055eb",
+    "rvncApiKeySecretName": "rvnc-api-key",
+    "rvncApiKeyIdSecretName": "rvnc-api-key-id"
+  },
+  "resources": [
+    {
+      "comments": "Storage account for the function app (identity-based, no shared keys). Also hosts the deployment package container.",
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[variables('storageAccountName')]",
+      "location": "[parameters('location')]",
+      "kind": "StorageV2",
+      "sku": { "name": "Standard_LRS" },
+      "properties": {
+        "minimumTlsVersion": "TLS1_2",
+        "allowSharedKeyAccess": false,
+        "allowBlobPublicAccess": false,
+        "supportsHttpsTrafficOnly": true
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[concat(variables('storageAccountName'), '/default/', variables('deploymentContainerName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ],
+      "properties": {
+        "publicAccess": "None"
+      }
+    },
+    {
+      "comments": "Container holding the RealVNC ingestion watermark/checkpoint blob.",
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[concat(variables('storageAccountName'), '/default/', variables('checkpointContainerName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ],
+      "properties": {
+        "publicAccess": "None"
+      }
+    },
+    {
+      "comments": "Workspace-based Application Insights for function monitoring (uses the existing Log Analytics workspace).",
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[variables('appInsightsName')]",
+      "location": "[parameters('location')]",
+      "kind": "web",
+      "properties": {
+        "Application_Type": "web",
+        "WorkspaceResourceId": "[variables('workspaceResourceId')]"
+      }
+    },
+    {
+      "comments": "Custom table in the EXISTING Log Analytics workspace for the RealVNC portal audit logs.",
+      "type": "Microsoft.OperationalInsights/workspaces/tables",
+      "apiVersion": "2022-10-01",
+      "name": "[concat(parameters('logAnalyticsWorkspaceName'), '/', variables('tableName'))]",
+      "properties": {
+        "schema": {
+          "name": "[variables('tableName')]",
+          "columns": [
+            { "name": "TimeGenerated", "type": "datetime" },
+            { "name": "id", "type": "string" },
+            { "name": "description", "type": "string" },
+            { "name": "teamId", "type": "string" },
+            { "name": "serverId", "type": "string" },
+            { "name": "serverName", "type": "string" },
+            { "name": "viewerId", "type": "string" },
+            { "name": "userId", "type": "string" },
+            { "name": "email", "type": "string" },
+            { "name": "timestamp", "type": "long" },
+            { "name": "eventType", "type": "string" },
+            { "name": "eventCategory", "type": "string" },
+            { "name": "eventBody", "type": "dynamic" }
+          ]
+        },
+        "retentionInDays": -1
+      }
+    },
+    {
+      "comments": "Direct Data Collection Rule. kind:Direct exposes its own logs-ingestion endpoint (no DCE needed). Transforms the RealVNC timestamp (epoch ms) into TimeGenerated.",
+      "type": "Microsoft.Insights/dataCollectionRules",
+      "apiVersion": "2023-03-11",
+      "name": "[variables('dcrName')]",
+      "location": "[parameters('location')]",
+      "kind": "Direct",
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces/tables', parameters('logAnalyticsWorkspaceName'), variables('tableName'))]"
+      ],
+      "properties": {
+        "streamDeclarations": {
+          "Custom-RealVNC_PortalLogs_CL": {
+            "columns": [
+              { "name": "id", "type": "string" },
+              { "name": "description", "type": "string" },
+              { "name": "teamId", "type": "string" },
+              { "name": "serverId", "type": "string" },
+              { "name": "serverName", "type": "string" },
+              { "name": "viewerId", "type": "string" },
+              { "name": "userId", "type": "string" },
+              { "name": "email", "type": "string" },
+              { "name": "timestamp", "type": "long" },
+              { "name": "eventType", "type": "string" },
+              { "name": "eventCategory", "type": "string" },
+              { "name": "eventBody", "type": "dynamic" }
+            ]
+          }
+        },
+        "destinations": {
+          "logAnalytics": [
+            {
+              "workspaceResourceId": "[variables('workspaceResourceId')]",
+              "name": "laDestination"
+            }
+          ]
+        },
+        "dataFlows": [
+          {
+            "streams": [ "Custom-RealVNC_PortalLogs_CL" ],
+            "destinations": [ "laDestination" ],
+            "transformKql": "[variables('transformKql')]",
+            "outputStream": "Custom-RealVNC_PortalLogs_CL"
+          }
+        ]
+      }
+    },
+    {
+      "comments": "Key Vault (RBAC-authorized) holding the RealVNC API secrets.",
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2023-07-01",
+      "name": "[variables('keyVaultName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "tenantId": "[subscription().tenantId]",
+        "sku": { "family": "A", "name": "standard" },
+        "enableRbacAuthorization": true,
+        "enableSoftDelete": true,
+        "publicNetworkAccess": "Enabled"
+      }
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2023-07-01",
+      "name": "[concat(variables('keyVaultName'), '/', variables('rvncApiKeySecretName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+      ],
+      "properties": {
+        "value": "[parameters('rvncApiKey')]"
+      }
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "apiVersion": "2023-07-01",
+      "name": "[concat(variables('keyVaultName'), '/', variables('rvncApiKeyIdSecretName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+      ],
+      "properties": {
+        "value": "[parameters('rvncApiKeyId')]"
+      }
+    },
+    {
+      "comments": "Flex Consumption hosting plan.",
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2024-04-01",
+      "name": "[variables('hostingPlanName')]",
+      "location": "[parameters('location')]",
+      "kind": "functionapp",
+      "sku": {
+        "tier": "FlexConsumption",
+        "name": "FC1"
+      },
+      "properties": {
+        "reserved": true
+      }
+    },
+    {
+      "comments": "The function app. System-assigned managed identity; Flex Consumption Python runtime; deployment package pulled via managed identity.",
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2024-04-01",
+      "name": "[variables('functionAppName')]",
+      "location": "[parameters('location')]",
+      "kind": "functionapp,linux",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', variables('deploymentContainerName'))]",
+        "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]",
+        "[resourceId('Microsoft.Insights/dataCollectionRules', variables('dcrName'))]",
+        "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), variables('rvncApiKeySecretName'))]",
+        "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), variables('rvncApiKeyIdSecretName'))]"
+      ],
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+        "httpsOnly": true,
+        "functionAppConfig": {
+          "deployment": {
+            "storage": {
+              "type": "blobContainer",
+              "value": "[concat(reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))).primaryEndpoints.blob, variables('deploymentContainerName'))]",
+              "authentication": {
+                "type": "SystemAssignedIdentity"
+              }
+            }
+          },
+          "scaleAndConcurrency": {
+            "maximumInstanceCount": "[parameters('maximumInstanceCount')]",
+            "instanceMemoryMB": "[parameters('instanceMemoryMB')]"
+          },
+          "runtime": {
+            "name": "python",
+            "version": "[parameters('pythonVersion')]"
+          }
+        },
+        "siteConfig": {
+          "appSettings": [
+            {
+              "name": "AzureWebJobsStorage__accountName",
+              "value": "[variables('storageAccountName')]"
+            },
+            {
+              "name": "AzureWebJobsStorage__credential",
+              "value": "managedidentity"
+            },
+            {
+              "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+              "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').ConnectionString]"
+            },
+            {
+              "name": "SCHEDULE_NCRONTAB",
+              "value": "[parameters('scheduleNcrontab')]"
+            },
+            {
+              "name": "LOOKBACK_MS",
+              "value": "[parameters('lookbackMs')]"
+            },
+            {
+              "name": "DCR_IMMUTABLE_ID",
+              "value": "[reference(resourceId('Microsoft.Insights/dataCollectionRules', variables('dcrName')), '2023-03-11').immutableId]"
+            },
+            {
+              "name": "DCE_ENDPOINT",
+              "value": "[reference(resourceId('Microsoft.Insights/dataCollectionRules', variables('dcrName')), '2023-03-11').endpoints.logsIngestion]"
+            },
+            {
+              "name": "RVNC_API_KEY",
+              "value": "[concat('@Microsoft.KeyVault(SecretUri=', reference(resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), variables('rvncApiKeySecretName'))).secretUri, ')')]"
+            },
+            {
+              "name": "RVNC_API_KEY_ID",
+              "value": "[concat('@Microsoft.KeyVault(SecretUri=', reference(resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), variables('rvncApiKeyIdSecretName'))).secretUri, ')')]"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "comments": "Gives the function app's identity write access to the deployment/host storage.",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), variables('functionAppName'), variables('storageBlobDataOwnerRoleId'))]",
+      "scope": "[concat('Microsoft.Storage/storageAccounts', '/', variables('storageAccountName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]"
+      ],
+      "properties": {
+        "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('storageBlobDataOwnerRoleId'))]",
+        "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2024-04-01', 'Full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "comments": "Lets the function app read the RealVNC secrets from Key Vault (resolves the Key Vault references).",
+      "type": "Microsoft.KeyVault/vaults/providers/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[concat(variables('keyVaultName'), '/Microsoft.Authorization/', guid(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), variables('functionAppName'), variables('keyVaultSecretsUserRoleId')))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+      ],
+      "properties": {
+        "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('keyVaultSecretsUserRoleId'))]",
+        "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2024-04-01', 'Full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "comments": "Lets the function app's identity publish logs to the Direct DCR (Logs Ingestion API).",
+      "type": "Microsoft.Insights/dataCollectionRules/providers/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[concat(variables('dcrName'), '/Microsoft.Authorization/', guid(resourceId('Microsoft.Insights/dataCollectionRules', variables('dcrName')), variables('functionAppName'), variables('monitoringMetricsPublisherRoleId')))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
+        "[resourceId('Microsoft.Insights/dataCollectionRules', variables('dcrName'))]"
+      ],
+      "properties": {
+        "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('monitoringMetricsPublisherRoleId'))]",
+        "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2024-04-01', 'Full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "comments": "One-deploy: pulls released-package.zip into the deployment container and activates the code. Skipped when deployCode is false (deploy infra only, publish code separately).",
+      "condition": "[parameters('deployCode')]",
+      "type": "Microsoft.Web/sites/extensions",
+      "apiVersion": "2022-09-01",
+      "name": "[concat(variables('functionAppName'), '/onedeploy')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
+        "[resourceId('Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), variables('functionAppName'), variables('storageBlobDataOwnerRoleId')))]"
+      ],
+      "properties": {
+        "packageUri": "[parameters('packageUri')]",
+        "remoteBuild": true
+      }
+    }
+  ],
+  "outputs": {
+    "functionAppName": {
+      "type": "string",
+      "value": "[variables('functionAppName')]"
+    },
+    "functionAppPrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2024-04-01', 'Full').identity.principalId]"
+    },
+    "dcrImmutableId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Insights/dataCollectionRules', variables('dcrName')), '2023-03-11').immutableId]"
+    },
+    "logsIngestionEndpoint": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Insights/dataCollectionRules', variables('dcrName')), '2023-03-11').endpoints.logsIngestion]"
+    },
+    "keyVaultName": {
+      "type": "string",
+      "value": "[variables('keyVaultName')]"
+    }
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/0.1.2-preview/CreateUIDefinition.MultiVm.json#",
+  "handler": "Microsoft.Azure.CreateUIDef",
+  "version": "0.1.2-preview",
+  "parameters": {
+    "basics": [
+      {
+        "name": "appNamePrefix",
+        "type": "Microsoft.Common.TextBox",
+        "label": "App name prefix",
+        "toolTip": "Common name used as a prefix for all resources. A short unique suffix is added automatically. Letters and numbers only, 2-11 characters.",
+        "defaultValue": "realvnc",
+        "constraints": {
+          "required": true,
+          "regex": "^[a-zA-Z][a-zA-Z0-9]{1,10}$",
+          "validationMessage": "Start with a letter; letters and numbers only; 2-11 characters."
+        }
+      },
+      {
+        "name": "logAnalyticsWorkspaceName",
+        "type": "Microsoft.Common.TextBox",
+        "label": "Existing Log Analytics workspace name",
+        "toolTip": "Name of the existing Log Analytics workspace in the selected resource group. It is not created by this template.",
+        "constraints": {
+          "required": true
+        }
+      }
+    ],
+    "steps": [
+      {
+        "name": "realvnc",
+        "label": "RealVNC credentials",
+        "elements": [
+          {
+            "name": "rvncApiKey",
+            "type": "Microsoft.Common.PasswordBox",
+            "label": {
+              "password": "RealVNC API access key",
+              "confirmPassword": "Confirm access key"
+            },
+            "toolTip": "RealVNC portal API accessKey. Stored as a Key Vault secret.",
+            "options": {
+              "hideConfirmation": false
+            },
+            "constraints": {
+              "required": true
+            }
+          },
+          {
+            "name": "rvncApiKeyId",
+            "type": "Microsoft.Common.PasswordBox",
+            "label": {
+              "password": "RealVNC API access key id",
+              "confirmPassword": "Confirm access key id"
+            },
+            "toolTip": "RealVNC portal API accessKeyId. Stored as a Key Vault secret.",
+            "options": {
+              "hideConfirmation": false
+            },
+            "constraints": {
+              "required": true
+            }
+          }
+        ]
+      },
+      {
+        "name": "schedule",
+        "label": "Schedule & advanced",
+        "elements": [
+          {
+            "name": "scheduleNcrontab",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Timer schedule (NCRONTAB)",
+            "toolTip": "How often the function runs. Default is every 10 minutes. Format: seconds minutes hours day month day-of-week.",
+            "defaultValue": "0 */10 * * * *",
+            "constraints": {
+              "required": true
+            }
+          },
+          {
+            "name": "lookbackMs",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Lookback window (ms)",
+            "toolTip": "How far back each run pulls audit logs, in milliseconds. Keep >= the schedule interval. Default 900000 (15 min).",
+            "defaultValue": "900000",
+            "constraints": {
+              "required": true,
+              "regex": "^[0-9]+$",
+              "validationMessage": "Numbers only."
+            }
+          },
+          {
+            "name": "packageUri",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Function package URL",
+            "toolTip": "URL of released-package.zip. Leave default to use the latest GitHub release.",
+            "defaultValue": "https://github.com/0xNekobasu/RealVNC_Logs_2_Log_Analytics/releases/latest/download/released-package.zip",
+            "constraints": {
+              "required": true
+            }
+          }
+        ]
+      }
+    ],
+    "outputs": {
+      "appNamePrefix": "[basics('appNamePrefix')]",
+      "logAnalyticsWorkspaceName": "[basics('logAnalyticsWorkspaceName')]",
+      "rvncApiKey": "[steps('realvnc').rvncApiKey]",
+      "rvncApiKeyId": "[steps('realvnc').rvncApiKeyId]",
+      "scheduleNcrontab": "[steps('schedule').scheduleNcrontab]",
+      "lookbackMs": "[steps('schedule').lookbackMs]",
+      "packageUri": "[steps('schedule').packageUri]",
+      "location": "[location()]"
+    }
+  }
+}
